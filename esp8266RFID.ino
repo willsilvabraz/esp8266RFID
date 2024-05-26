@@ -3,42 +3,42 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ArduinoJson.h>
-#include <Servo.h>  
+#include <Servo.h>
 
-#define RST_PIN         4           
-#define SS_PIN          15          
+#define RST_PIN         4
+#define SS_PIN          15
 
-MFRC522 mfrc522(SS_PIN, RST_PIN);   
+MFRC522 mfrc522(SS_PIN, RST_PIN);
 
-const char* ssid = "localhost";          
-const char* password = "127.0.0.1";   
+const char* ssid = "localhost";
+const char* password = "127.0.0.1";
 
-const char* serverName = "https://apirfid.onrender.com/cadUid";  
+const char* serverName = "https://apirfid.onrender.com/cadUid";
 
-const int ledPin = D2; 
+const int ledPin = D2;
+const int ledServoPin = D3; // Adicionado o pino do LED associado ao servo
 
 WiFiClientSecure wifiClientSecure;
-Servo myServo;  
+Servo myServo;
 
 void setup() {
-  pinMode(ledPin, OUTPUT); 
+  pinMode(ledPin, OUTPUT);
+  pinMode(ledServoPin, OUTPUT); // Configura o pino do LED associado ao servo como saída
 
   Serial.begin(115200);
 
   connectWiFi();
 
-  SPI.begin();                      
-  mfrc522.PCD_Init();               
-  delay(4);                         
+  SPI.begin();
+  mfrc522.PCD_Init();
+  delay(4);
   mfrc522.PCD_DumpVersionToSerial();
   Serial.println(F("Scan PICC to see UID..."));
 
-  wifiClientSecure.setInsecure(); 
+  wifiClientSecure.setInsecure();
 
-  myServo.attach(D1);  
-  myServo.write(0);    
-  digitalWrite(ledPin, HIGH);  
-
+  myServo.attach(D1);
+  myServo.write(0);
 }
 
 void loop() {
@@ -57,7 +57,6 @@ void loop() {
         }
         uidString += String(mfrc522.uid.uidByte[i], HEX);
       }
-      Serial.println(uidString);
 
       mfrc522.PICC_HaltA();
 
@@ -66,20 +65,20 @@ void loop() {
       }
     }
   }
-  delay(1000);  // Reduzido o tempo de espera na função loop
+  delay(1000);
 }
 
 void sendJsonToServer(const char* status, const char* uid) {
   HTTPClient http;
 
-  http.setTimeout(5000); // Reduz o tempo limite da conexão HTTP para 5 segundos
+  http.setTimeout(5000);
 
   if (!http.begin(wifiClientSecure, serverName)) {
     Serial.println("Falha ao conectar ao servidor.");
     return;
   }
 
-  http.addHeader("Content-Type", "application/json");  
+  http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<200> doc;
   doc["status"] = status;
@@ -88,20 +87,18 @@ void sendJsonToServer(const char* status, const char* uid) {
   String requestBody;
   serializeJson(doc, requestBody);
 
-  Serial.println("Enviando JSON ao servidor:");
-  Serial.println(requestBody);
   digitalWrite(ledPin, HIGH);
-  int httpResponseCode = http.POST(requestBody);  
+  int httpResponseCode = http.POST(requestBody);
 
   if (httpResponseCode > 0) {
-    String response = http.getString();  
-    handleJsonResponse(response);        
+    String response = http.getString();
+    handleJsonResponse(response);
   } else {
     Serial.print("Falha na requisição HTTP. Código de resposta: ");
     Serial.println(httpResponseCode);
   }
 
-  http.end();  
+  http.end();
 }
 
 void handleJsonResponse(String jsonResponse) {
@@ -113,13 +110,12 @@ void handleJsonResponse(String jsonResponse) {
   if (!error) {
     if (doc.containsKey("status")) {
       const char* status = doc["status"];
-      Serial.print("Status recebido: ");
       Serial.println(status);
-      
+
       if (strcmp(status, "liberado") == 0) {
-        abrir(); // Abrir o servo se o status for "liberado"
-        delay(5000); // Aguardar 5 segundos
-        fechar(); // Fechar o servo após 5 segundos
+        abrir();
+        delay(5000);
+        fechar();
       }
     } else {
       Serial.println("Chave 'status' não encontrada no JSON.");
@@ -139,18 +135,22 @@ void connectWiFi() {
   }
   Serial.println("");
   Serial.println("Conectado ao Wi-Fi");
+
+  digitalWrite(ledPin, HIGH);
 }
 
 void abrir() {
   for (int pos = 0; pos <= 180; pos++) {
     myServo.write(pos);
-    delay(15);  
+    delay(15);
   }
+  digitalWrite(ledServoPin, HIGH); // Liga o LED na porta D3 ao final da função abrir()
 }
 
 void fechar() {
+  digitalWrite(ledServoPin, LOW); // Desliga o LED na porta D3 no início da função fechar()
   for (int pos = 180; pos >= 0; pos--) {
     myServo.write(pos);
-    delay(15);  
+    delay(15);
   }
 }
