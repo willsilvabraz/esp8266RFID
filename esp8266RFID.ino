@@ -3,95 +3,84 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ArduinoJson.h>
-#include <Servo.h>  // Biblioteca para controle do servomotor
+#include <Servo.h>  
 
-#define RST_PIN         4           // Configurable, see typical pin layout above
-#define SS_PIN          15          // Configurable, see typical pin layout above
+#define RST_PIN         4           
+#define SS_PIN          15          
 
-MFRC522 mfrc522(SS_PIN, RST_PIN);   // Create MFRC522 instance  
+MFRC522 mfrc522(SS_PIN, RST_PIN);   
 
-const char* ssid = "Index";          // Substitua com o SSID da sua rede Wi-Fi
-const char* password = "12345678";   // Substitua com a senha da sua rede Wi-Fi
+const char* ssid = "localhost";          
+const char* password = "127.0.0.1";   
 
-const char* serverName = "https://apirfid.onrender.com/cadUid";  // URL da API
+const char* serverName = "https://apirfid.onrender.com/cadUid";  
 
-const int ledPin = D2; // Pino D2 para o LED
-
+const int ledPin = D2; 
 
 WiFiClientSecure wifiClientSecure;
-Servo myServo;  // Instância do servomotor
+Servo myServo;  
 
 void setup() {
-  pinMode(ledPin, OUTPUT); // Configura o pino do LED como saída
+  pinMode(ledPin, OUTPUT); 
 
   Serial.begin(115200);
 
-  // Conectando ao Wi-Fi
-  WiFi.begin(ssid, password);
-  Serial.print("Conectando ao Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("Conectado ao Wi-Fi");
+  connectWiFi();
 
-  SPI.begin();                      // Init SPI bus
-  mfrc522.PCD_Init();               // Init MFRC522
-  delay(4);                         // Optional delay. Some boards need more time after init to be ready
-  mfrc522.PCD_DumpVersionToSerial();// Show details of PCD - MFRC522 Card Reader details
+  SPI.begin();                      
+  mfrc522.PCD_Init();               
+  delay(4);                         
+  mfrc522.PCD_DumpVersionToSerial();
   Serial.println(F("Scan PICC to see UID..."));
 
-  // Configurando wifiClientSecure para ignorar a verificação do certificado (opcional e inseguro)
-  wifiClientSecure.setInsecure(); // Unsecured connection (for testing only)
+  wifiClientSecure.setInsecure(); 
 
-  myServo.attach(D1);  // Pino do servomotor (substitua pelo pino que você está usando)
-  myServo.write(0);    // Posiciona o servomotor na posição inicial (0 graus)
-  digitalWrite(ledPin, HIGH);  // Resposta da API
+  myServo.attach(D1);  
+  myServo.write(0);    
+  digitalWrite(ledPin, HIGH);  
 
 }
 
 void loop() {
- // moveServo();  // Chama a função para movimentar o servomotor
-  readCardUID();
-  delay(10000);  // Espera 10 segundos antes de enviar novamente
-}
-
-void readCardUID() {
-  if (!mfrc522.PICC_IsNewCardPresent()) {
-    return;
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
   }
 
-  if (!mfrc522.PICC_ReadCardSerial()) {
-    return;
-  }
-  
-  digitalWrite(ledPin, LOW);
-  Serial.print(F("Card UID: "));
-  String uidString = "";
-  for (byte i = 0; i < mfrc522.uid.size; i++) {
-    if (mfrc522.uid.uidByte[i] < 0x10) {
-      uidString += "0";
+  if (mfrc522.PICC_IsNewCardPresent()) {
+    if (mfrc522.PICC_ReadCardSerial()) {
+      digitalWrite(ledPin, LOW);
+      Serial.print(F("Card UID: "));
+      String uidString = "";
+      for (byte i = 0; i < mfrc522.uid.size; i++) {
+        if (mfrc522.uid.uidByte[i] < 0x10) {
+          uidString += "0";
+        }
+        uidString += String(mfrc522.uid.uidByte[i], HEX);
+      }
+      Serial.println(uidString);
+
+      mfrc522.PICC_HaltA();
+
+      if (WiFi.status() == WL_CONNECTED) {
+        sendJsonToServer("testando", uidString.c_str());
+      }
     }
-    uidString += String(mfrc522.uid.uidByte[i], HEX);
   }
-  Serial.println(uidString);
-
-  mfrc522.PICC_HaltA();
-
-  sendJsonToServer("testando", uidString.c_str());
-
-
+  delay(1000);  // Reduzido o tempo de espera na função loop
 }
 
 void sendJsonToServer(const char* status, const char* uid) {
   HTTPClient http;
 
-  // Use begin() com WiFiClientSecure para URLs HTTPS
-  http.begin(wifiClientSecure, serverName);  // URL para enviar o POST
-  http.addHeader("Content-Type", "application/json");  // Tipo do conteúdo
+  http.setTimeout(5000); // Reduz o tempo limite da conexão HTTP para 5 segundos
 
-  // Criando objeto JSON
+  if (!http.begin(wifiClientSecure, serverName)) {
+    Serial.println("Falha ao conectar ao servidor.");
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");  
+
   StaticJsonDocument<200> doc;
   doc["status"] = status;
   doc["uid"] = uid;
@@ -99,58 +88,69 @@ void sendJsonToServer(const char* status, const char* uid) {
   String requestBody;
   serializeJson(doc, requestBody);
 
-  // Mostrando o JSON que será enviado
-  // Liga o LED
-
   Serial.println("Enviando JSON ao servidor:");
   Serial.println(requestBody);
   digitalWrite(ledPin, HIGH);
-  delay(100);
-  digitalWrite(ledPin, LOW);
-  int httpResponseCode = http.POST(requestBody);  // Envia o POST com o JSON
- // delay(1000);
+  int httpResponseCode = http.POST(requestBody);  
+
   if (httpResponseCode > 0) {
-    String response = http.getString();  // Obtém a resposta
-    delay(100);
-    Serial.println(httpResponseCode);  // Código de resposta HTTP
-    delay(100);
-    Serial.println(response);
-    delay(100);
-    
-    delay(100);
-    abrir();
-    delay(5000);
-    fechar();
-    delay(100);
-  } else{
-    if(httpResponseCode == -11){
-      delay(100);
-    abrir();
-    delay(5000);
-    fechar();
-    delay(100);
-    }else{
-    Serial.print("Erro no envio do POST: ");
+    String response = http.getString();  
+    handleJsonResponse(response);        
+  } else {
+    Serial.print("Falha na requisição HTTP. Código de resposta: ");
     Serial.println(httpResponseCode);
-    }  // Código de resposta HTTP de erro
   }
 
-  http.end();  // Fecha a conexão
-    digitalWrite(ledPin, HIGH);  // Resposta da API
+  http.end();  
+}
+
+void handleJsonResponse(String jsonResponse) {
+  const size_t capacity = JSON_OBJECT_SIZE(1) + 20;
+  DynamicJsonDocument doc(capacity);
+
+  DeserializationError error = deserializeJson(doc, jsonResponse);
+
+  if (!error) {
+    if (doc.containsKey("status")) {
+      const char* status = doc["status"];
+      Serial.print("Status recebido: ");
+      Serial.println(status);
+      
+      if (strcmp(status, "liberado") == 0) {
+        abrir(); // Abrir o servo se o status for "liberado"
+        delay(5000); // Aguardar 5 segundos
+        fechar(); // Fechar o servo após 5 segundos
+      }
+    } else {
+      Serial.println("Chave 'status' não encontrada no JSON.");
+    }
+  } else {
+    Serial.print("Falha ao fazer parsing do JSON: ");
+    Serial.println(error.c_str());
+  }
+}
+
+void connectWiFi() {
+  Serial.print("Conectando ao Wi-Fi");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("Conectado ao Wi-Fi");
 }
 
 void abrir() {
-  // Movimenta o servomotor de 0 a 180 graus
   for (int pos = 0; pos <= 180; pos++) {
     myServo.write(pos);
-    delay(15);  // Ajuste o atraso conforme necessário
+    delay(15);  
   }
 }
 
 void fechar() {
-  // Movimenta o servomotor de volta de 180 a 0 graus
   for (int pos = 180; pos >= 0; pos--) {
     myServo.write(pos);
-    delay(15);  // Ajuste o atraso conforme necessário
+    delay(15);  
   }
 }
